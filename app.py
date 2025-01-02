@@ -3,13 +3,9 @@ from flask_cors import CORS
 import google.generativeai as genai
 import PyPDF2
 import os
-from google.api_core import retry
-from functools import partial
-from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 import json
-
-# Load environment variables from .env file
-load_dotenv()
 
 app = Flask(__name__)
 CORS(app, resources={
@@ -24,28 +20,22 @@ api_key = os.getenv('GENAI_API_KEY')
 if not api_key:
     raise ValueError("GENAI_API_KEY not found in environment variables")
 
-genai.configure(
-    api_key=api_key,
-    transport='rest'
+genai.configure(api_key=api_key, transport='rest')
+model = genai.GenerativeModel(
+    model_name='gemini-pro',
+    generation_config={
+        'temperature': 0.7,
+        'top_p': 0.8,
+        'top_k': 40,
+        'max_output_tokens': 2048,
+    }
 )
 
 def generate_analysis(prompt):
     try:
-        model = genai.GenerativeModel(
-            model_name='gemini-pro',
-            generation_config={
-                'temperature': 0.7,
-                'top_p': 0.8,
-                'top_k': 40,
-                'max_output_tokens': 2048,
-            }
-        )
         response = model.generate_content(prompt)
-        
-        # Add error handling for the response
         if not response.text:
             raise ValueError("Empty response received from Gemini AI")
-            
         return response.text
     except Exception as e:
         print(f"Error in generate_analysis: {str(e)}")
@@ -53,11 +43,18 @@ def generate_analysis(prompt):
 
 def extract_text_from_pdf(pdf_file):
     try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-        return text
+        # Read file into memory
+        pdf_content = BytesIO(pdf_file.read())
+        pdf_reader = PyPDF2.PdfReader(pdf_content)
+        
+        # Use ThreadPoolExecutor for parallel text extraction
+        with ThreadPoolExecutor() as executor:
+            texts = list(executor.map(
+                lambda page: page.extract_text(), 
+                pdf_reader.pages
+            ))
+        
+        return " ".join(texts)
     except Exception as e:
         print(f"Error in extract_text_from_pdf: {str(e)}")
         raise
@@ -208,7 +205,7 @@ def analyze_resume(resume_text, job_description):
 
 
 @app.route('/api/analyze', methods=['POST'])
-def analyze():
+async def analyze():
     try:
         if 'resume' not in request.files:
             return jsonify({'error': 'No resume file provided'}), 400
@@ -219,22 +216,28 @@ def analyze():
         if not job_description:
             return jsonify({'error': 'No job description provided'}), 400
         
-        resume_text = extract_text_from_pdf(resume_file)
+        # Set a reasonable file size limit
+        max_file_size = 5 * 1024 * 1024  # 5MB
+        resume_file.seek(0, os.SEEK_END)
+        size = resume_file.tell()
+        if size > max_file_size:
+            return jsonify({'error': 'Resume file too large'}), 400
+        resume_file.seek(0)
         
-        # Add input validation
+        resume_text = extract_text_from_pdf(resume_file)
         if not resume_text.strip():
             return jsonify({'error': 'Empty resume text extracted'}), 400
             
         analysis = analyze_resume(resume_text, job_description)
-        
         return jsonify(analysis)
     
-    except ValueError as e:
-        print(f"Validation error: {str(e)}")
-        return jsonify({'error': str(e)}), 400
     except Exception as e:
         print(f"Error in /api/analyze: {str(e)}")
-        return jsonify({'error': 'Internal server error occurred'}), 500
+        return jsonify({'error': str(e)}), 500
+    
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy'}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
