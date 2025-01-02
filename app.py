@@ -13,9 +13,11 @@ import time
 app = Flask(__name__)
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["https://jobmatch-hazel.vercel.app/"],
-        "methods": ["POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"]
+        "origins": ["https://jobmatch-hazel.vercel.app"],
+        "methods": ["POST", "GET", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "expose_headers": ["Content-Type"],
+        "supports_credentials": True
     }
 })
 
@@ -230,7 +232,7 @@ def analyze_resume(resume_text, job_description):
 
 
 @app.route('/api/analyze', methods=['POST'])
-async def analyze():
+def analyze():
     try:
         if not redis_client:
             return jsonify({'error': 'Redis configuration missing'}), 500
@@ -254,33 +256,40 @@ async def analyze():
         # Generate job ID
         job_id = str(uuid.uuid4())
         
-        # Extract text quickly
-        resume_text = extract_text_from_pdf(resume_file)
-        if not resume_text.strip():
-            return jsonify({'error': 'Empty resume text extracted'}), 400
-        
-        # Store initial status
-        redis_client.setex(f"status:{job_id}", 86400, "processing")
-        
-        # Start background processing
-        import threading
-        thread = threading.Thread(
-            target=process_resume_background,
-            args=(job_id, resume_text, job_description)
-        )
-        thread.start()
-        
-        return jsonify({
-            'job_id': job_id,
-            'status': 'processing'
-        })
+        try:
+            # Extract text quickly
+            resume_text = extract_text_from_pdf(resume_file)
+            if not resume_text.strip():
+                return jsonify({'error': 'Empty resume text extracted'}), 400
+            
+            # Store initial status
+            redis_client.setex(f"status:{job_id}", 86400, "processing")
+            
+            # Start background processing
+            import threading
+            thread = threading.Thread(
+                target=process_resume_background,
+                args=(job_id, resume_text, job_description)
+            )
+            thread.daemon = True  # Make thread daemon
+            thread.start()
+            
+            response = jsonify({
+                'job_id': job_id,
+                'status': 'processing'
+            })
+            return response, 200
+            
+        except Exception as inner_e:
+            print(f"Inner error in /api/analyze: {str(inner_e)}")
+            return jsonify({'error': str(inner_e)}), 500
     
     except Exception as e:
         print(f"Error in /api/analyze: {str(e)}")
         return jsonify({'error': str(e)}), 500
     
 @app.route('/api/status/<job_id>', methods=['GET'])
-async def check_status(job_id):
+def check_status(job_id):
     try:
         if not redis_client:
             return jsonify({'error': 'Redis configuration missing'}), 500

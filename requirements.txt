@@ -1,4 +1,4 @@
-Flask[async]
+flask
 flask-cors
 google-generativeai
 PyPDF2
