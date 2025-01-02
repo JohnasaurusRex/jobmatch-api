@@ -6,6 +6,9 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import json
+import uuid
+from redis import Redis
+import time
 
 app = Flask(__name__)
 CORS(app, resources={
@@ -15,6 +18,9 @@ CORS(app, resources={
         "allow_headers": ["Content-Type"]
     }
 })
+
+redis_url = os.getenv('REDIS_URL')
+redis_client = Redis.from_url(redis_url) if redis_url else None
 
 api_key = os.getenv('GENAI_API_KEY')
 if not api_key:
@@ -42,22 +48,41 @@ def generate_analysis(prompt):
         raise
 
 def extract_text_from_pdf(pdf_file):
+    pdf_content = BytesIO(pdf_file.read())
+    pdf_reader = PyPDF2.PdfReader(pdf_content)
+    with ThreadPoolExecutor() as executor:
+        texts = list(executor.map(
+            lambda page: page.extract_text(), 
+            pdf_reader.pages[:10]  # Limit to first 10 pages
+        ))
+    return " ".join(texts)
+
+def process_resume_background(job_id, resume_text, job_description):
     try:
-        # Read file into memory
-        pdf_content = BytesIO(pdf_file.read())
-        pdf_reader = PyPDF2.PdfReader(pdf_content)
+        # Truncate inputs
+        resume_text = resume_text[:10000]  # Limit to ~10k characters
+        job_description = job_description[:5000]  # Limit to ~5k characters
         
-        # Use ThreadPoolExecutor for parallel text extraction
-        with ThreadPoolExecutor() as executor:
-            texts = list(executor.map(
-                lambda page: page.extract_text(), 
-                pdf_reader.pages
-            ))
+        analysis = analyze_resume(resume_text, job_description)
         
-        return " ".join(texts)
+        # Store result in Redis with 24-hour expiration
+        redis_client.setex(
+            f"result:{job_id}",
+            86400,  # 24 hours in seconds
+            json.dumps(analysis)
+        )
+        redis_client.setex(
+            f"status:{job_id}",
+            86400,
+            "completed"
+        )
     except Exception as e:
-        print(f"Error in extract_text_from_pdf: {str(e)}")
-        raise
+        redis_client.setex(
+            f"status:{job_id}",
+            86400,
+            f"error:{str(e)}"
+        )
+
 
 def analyze_resume(resume_text, job_description):
     prompt = f"""
@@ -207,6 +232,9 @@ def analyze_resume(resume_text, job_description):
 @app.route('/api/analyze', methods=['POST'])
 async def analyze():
     try:
+        if not redis_client:
+            return jsonify({'error': 'Redis configuration missing'}), 500
+            
         if 'resume' not in request.files:
             return jsonify({'error': 'No resume file provided'}), 400
         
@@ -216,24 +244,73 @@ async def analyze():
         if not job_description:
             return jsonify({'error': 'No job description provided'}), 400
         
-        # Set a reasonable file size limit
-        max_file_size = 5 * 1024 * 1024  # 5MB
+        # Validate file size (5MB limit)
+        max_file_size = 5 * 1024 * 1024
         resume_file.seek(0, os.SEEK_END)
-        size = resume_file.tell()
-        if size > max_file_size:
+        if resume_file.tell() > max_file_size:
             return jsonify({'error': 'Resume file too large'}), 400
         resume_file.seek(0)
         
+        # Generate job ID
+        job_id = str(uuid.uuid4())
+        
+        # Extract text quickly
         resume_text = extract_text_from_pdf(resume_file)
         if not resume_text.strip():
             return jsonify({'error': 'Empty resume text extracted'}), 400
-            
-        analysis = analyze_resume(resume_text, job_description)
-        return jsonify(analysis)
+        
+        # Store initial status
+        redis_client.setex(f"status:{job_id}", 86400, "processing")
+        
+        # Start background processing
+        import threading
+        thread = threading.Thread(
+            target=process_resume_background,
+            args=(job_id, resume_text, job_description)
+        )
+        thread.start()
+        
+        return jsonify({
+            'job_id': job_id,
+            'status': 'processing'
+        })
     
     except Exception as e:
         print(f"Error in /api/analyze: {str(e)}")
         return jsonify({'error': str(e)}), 500
+    
+@app.route('/api/status/<job_id>', methods=['GET'])
+async def check_status(job_id):
+    try:
+        if not redis_client:
+            return jsonify({'error': 'Redis configuration missing'}), 500
+            
+        status = redis_client.get(f"status:{job_id}")
+        if not status:
+            return jsonify({'error': 'Job not found'}), 404
+            
+        status = status.decode('utf-8')
+        
+        if status.startswith('error:'):
+            return jsonify({
+                'status': 'error',
+                'error': status[6:]
+            })
+            
+        if status == 'completed':
+            result = redis_client.get(f"result:{job_id}")
+            if result:
+                return jsonify({
+                    'status': 'completed',
+                    'result': json.loads(result)
+                })
+        
+        return jsonify({'status': status})
+    
+    except Exception as e:
+        print(f"Error in /api/status: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
     
 @app.route('/api/health', methods=['GET'])
 def health_check():

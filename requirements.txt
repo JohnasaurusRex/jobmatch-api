@@ -1,6 +1,5 @@
-Flask
-Flask-CORS
+flask
+flask-cors
 google-generativeai
 PyPDF2
-google-api-core
-python-dotenv
+redis
