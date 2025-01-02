@@ -14,7 +14,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["http://localhost:5173"],
+        "origins": ["https://jobmatch-hazel.vercel.app/"],
         "methods": ["POST", "OPTIONS"],
         "allow_headers": ["Content-Type"]
     }
