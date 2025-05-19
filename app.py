@@ -13,7 +13,7 @@ import time
 app = Flask(__name__)
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["https://jobmatch-hazel.vercel.app"],
+        "origins": ["https://jobmatch-hazel.vercel.app", "https://jobmatch.cjrex.online/"],
         "methods": ["POST", "GET", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "expose_headers": ["Content-Type"],
@@ -21,7 +21,7 @@ CORS(app, resources={
     }
 })
 
-redis_url = os.getenv('REDIS_URL')
+redis_url = os.getenv('REDIS_REDIS_URL')
 redis_client = Redis.from_url(redis_url) if redis_url else None
 
 api_key = os.getenv('GENAI_API_KEY')
