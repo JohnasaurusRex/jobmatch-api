@@ -13,7 +13,7 @@ import time
 app = Flask(__name__)
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["https://jobmatch-hazel.vercel.app", "https://jobmatch.cjrex.online/"],
+        "origins": ["https://jobmatch.cjrex.online/"],
         "methods": ["POST", "GET", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "expose_headers": ["Content-Type"],
@@ -30,7 +30,7 @@ if not api_key:
 
 genai.configure(api_key=api_key, transport='rest')
 model = genai.GenerativeModel(
-    model_name='gemini-pro',
+    model_name='gemini-2.0-flash',
     generation_config={
         'temperature': 0.7,
         'top_p': 0.8,
