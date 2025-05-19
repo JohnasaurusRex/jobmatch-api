@@ -13,7 +13,7 @@ import time
 app = Flask(__name__)
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["https://jobmatch.cjrex.online/"],
+        "origins": ["https://jobmatch.cjrex.online"],
         "methods": ["POST", "GET", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "expose_headers": ["Content-Type"],
