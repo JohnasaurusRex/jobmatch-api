@@ -21,7 +21,7 @@ CORS(app, resources={
     }
 })
 
-redis_url = os.getenv('REDIS_REDIS_URL')
+redis_url = os.getenv('A__KV_URL')
 redis_client = Redis.from_url(redis_url) if redis_url else None
 
 api_key = os.getenv('GENAI_API_KEY')
@@ -30,7 +30,7 @@ if not api_key:
 
 genai.configure(api_key=api_key, transport='rest')
 model = genai.GenerativeModel(
-    model_name='gemini-2.0-flash',
+    model_name='gemini-flash-latest',
     generation_config={
         'temperature': 0.7,
         'top_p': 0.8,
